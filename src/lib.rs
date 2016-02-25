@@ -53,6 +53,11 @@ extern crate rustc_serialize;
 extern crate time;
 extern crate utp;
 extern crate crossbeam;
+extern crate mio;
+extern crate slab;
+extern crate bytes;
+extern crate void;
+
 #[macro_use]
 extern crate maidsafe_utilities;
 extern crate socket_addr;
@@ -61,6 +66,8 @@ extern crate get_if_addrs;
 extern crate sodiumoxide;
 extern crate config_file_handler;
 extern crate service_discovery;
+extern crate secure_serialisation;
+
 #[cfg(target_family = "unix")]
 extern crate libc;
 extern crate nat_traversal;
