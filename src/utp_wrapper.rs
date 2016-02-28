@@ -30,8 +30,7 @@ impl UtpWrapper {
         let peer_addr = try!(socket.peer_addr());
         let local_addr = try!(socket.local_addr());
 
-        let thread_handle =
-            unwrap_result!(thread::Builder::new()
+        let thread_handle = unwrap_result!(thread::Builder::new()
                 .name("rust-utp multiplexer".to_owned())
                 .spawn(move || {
                     let mut socket = socket;

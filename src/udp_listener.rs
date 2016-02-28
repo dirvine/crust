@@ -29,8 +29,7 @@ use get_if_addrs;
 use maidsafe_utilities::serialisation::{deserialise, serialise};
 use maidsafe_utilities::thread::RaiiThreadJoiner;
 use rand;
-use nat_traversal::{MappedUdpSocket, MappingContext, PunchedUdpSocket,
-                    gen_rendezvous_info};
+use nat_traversal::{MappedUdpSocket, MappingContext, PunchedUdpSocket, gen_rendezvous_info};
 use sodiumoxide::crypto::box_::{PublicKey, SecretKey};
 
 use connection::{Connection, utp_rendezvous_connect, UtpRendezvousConnectMode};
@@ -68,8 +67,8 @@ impl RaiiUdpListener {
         // Ask others for our UDP external addresses as they see us. No need to filter out the
         // Local addresses as they will be used by processes in LAN where TCP is disallowed.
         let mut addrs = Vec::new();
-        if let Ok(MappedUdpSocket { endpoints, socket })
-            = MappedUdpSocket::map(try!(udp_socket.try_clone()), &mc).result_discard() {
+        if let Ok(MappedUdpSocket { endpoints, socket }) =
+               MappedUdpSocket::map(try!(udp_socket.try_clone()), &mc).result_discard() {
             addrs.extend(endpoints.into_iter().map(|ma| ma.addr));
             let local_addr = unwrap_result!(socket.local_addr());
             addrs.push(SocketAddr(local_addr));
@@ -156,7 +155,7 @@ impl RaiiUdpListener {
 
                 if udp_socket.send_to(&unwrap_result!(serialise(&connect_resp)),
                                       peer_addr.clone())
-                    .is_err() {
+                             .is_err() {
                     return;
                 }
 
@@ -167,15 +166,16 @@ impl RaiiUdpListener {
                     }
                 };
 
-                let connection = match utp_rendezvous_connect(socket,
-                                                              peer_addr,
-                                                              UtpRendezvousConnectMode::BootstrapAccept,
-                                                              our_public_key.clone(),
-                                                              event_tx.clone(),
-                                                              connection_map.clone()) {
-                    Ok(connection) => connection,
-                    Err(_) => return,
-                };
+                let connection =
+                    match utp_rendezvous_connect(socket,
+                                                 peer_addr,
+                                                 UtpRendezvousConnectMode::BootstrapAccept,
+                                                 our_public_key.clone(),
+                                                 event_tx.clone(),
+                                                 connection_map.clone()) {
+                        Ok(connection) => connection,
+                        Err(_) => return,
+                    };
 
                 unwrap_result!(connection_map.lock())
                     .entry(peer_id::new_id(pub_key))

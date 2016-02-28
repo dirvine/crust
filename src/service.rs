@@ -1,18 +1,26 @@
 // Copyright 2015 MaidSafe.net limited.
 //
-// This SAFE Network Software is licensed to you under (1) the MaidSafe.net Commercial License,
-// version 1.0 or later, or (2) The General Public License (GPL), version 3, depending on which
+// This SAFE Network Software is licensed to you under (1) the MaidSafe.net
+// Commercial License,
+// version 1.0 or later, or (2) The General Public License (GPL), version 3,
+// depending on which
 // licence you accepted on initial access to the Software (the "Licences").
 //
-// By contributing code to the SAFE Network Software, or to this project generally, you agree to be
-// bound by the terms of the MaidSafe Contributor Agreement, version 1.0.  This, along with the
-// Licenses can be found in the root directory of this project at LICENSE, COPYING and CONTRIBUTOR.
+// By contributing code to the SAFE Network Software, or to this project
+// generally, you agree to be
+// bound by the terms of the MaidSafe Contributor Agreement, version 1.0.
+// This, along with the
+// Licenses can be found in the root directory of this project at LICENSE,
+// COPYING and CONTRIBUTOR.
 //
-// Unless required by applicable law or agreed to in writing, the SAFE Network Software distributed
-// under the GPL Licence is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// Unless required by applicable law or agreed to in writing, the SAFE Network
+// Software distributed
+// under the GPL Licence is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES
+// OR CONDITIONS OF ANY
 // KIND, either express or implied.
 //
-// Please review the Licences for the specific language governing permissions and limitations
+// Please review the Licences for the specific language governing permissions
+// and limitations
 // relating to use of the SAFE Network Software.
 
 use std::collections::{HashMap, HashSet};
@@ -23,19 +31,19 @@ use service_discovery::ServiceDiscovery;
 use sodiumoxide;
 use sodiumoxide::crypto::box_;
 use sodiumoxide::crypto::box_::{PublicKey, SecretKey};
-use nat_traversal::{MappedUdpSocket, MappingContext, PrivRendezvousInfo,
-                    PubRendezvousInfo, PunchedUdpSocket, gen_rendezvous_info};
+use nat_traversal::{ÝMappedUdpSocket, MappingContext, PrivRendezvousInfo, PubRendezvousInfo,
+                    PunchedUdpSocket, gen_rendezvous_info};
 
-
+[MaÝ]
 use sender_receiver::CrustMsg;
 use connection::{RaiiTcpAcceptor, UtpRendezvousConnectMode};
 use udp_listener::RaiiUdpListener;
 use static_contact_info::StaticContactInfo;
 use rand;
-use config_handler::Config;
+use [MaÝ[MaÝ[MaÝ[MaÝconfig_handler::Config;
 use connection::Connection;
 use error::Error;
-use ip::SocketAddrExt;
+use ip::SocketAddrEx[M#ß[M#Ù[M#Õt;
 use connection;
 use bootstrap;
 use bootstrap::RaiiBootstrap;
@@ -84,7 +92,7 @@ impl OurConnectionInfo {
 pub struct TheirConnectionInfo {
     info: PubRendezvousInfo,
     static_contact_info: StaticContactInfo,
-    // tcp_addrs: Vec<SocketAddr>,
+    // tcp_addrs: Vkec<SocketAddr>,
     id: PeerId,
 }
 
@@ -140,9 +148,10 @@ impl Service {
                 Config::make_default()
             }
         };
-        let mapping_context = try!(MappingContext::new().result_discard()
-                                   .or(Err(io::Error::new(io::ErrorKind::Other,
-                                                          "Failed to create MappingContext"))));
+        let mapping_context = try!(MappingContext::new()
+                                       .result_discard()
+                                       .or(Err(io::Error::new(io::ErrorKind::Other,
+                                                              "Failed to create MappingContext"))));
         // Form initial peer contact infos - these will also contain echo-service addrs.
         let bootstrap_contacts = try!(bootstrap::get_known_contacts(&service_discovery, &config));
         for peer_contact_info in bootstrap_contacts.iter() {
@@ -191,25 +200,32 @@ impl Service {
         // Start the TCP Acceptor
         self.raii_tcp_acceptor = Some(try!(connection::start_tcp_accept(self.tcp_acceptor_port
                                                                             .unwrap_or(0),
-                                                   self.static_contact_info.clone(),
-                                                   self.our_keys.0.clone(),
-                                                   self.peer_contact_infos.clone(),
-                                                   self.event_tx.clone(),
-                                                   self.connection_map.clone(),
-                                                   self.expected_peers.clone())));
+                                                                        self.static_contact_info
+                                                                            .clone(),
+                                                                        self.our_keys.0.clone(),
+                                                                        self.peer_contact_infos
+                                                                            .clone(),
+                                                                        self.event_tx.clone(),
+                                                                        self.connection_map
+                                                                            .clone(),
+                                                                        self.expected_peers
+                                                                            .clone())));
         Ok(())
     }
 
     /// Starts accepting uTP connections.
     pub fn start_listening_utp(&mut self) -> io::Result<()> {
         // Start the UDP Listener
-        // [TODO]: we should find the exteranl address and if we are directly acessabel here for all listerners. Also listen on ip4 and 6 for all protocols - 2016-02-10 11:28pm
-        self.raii_udp_listener = Some(try!(RaiiUdpListener::new(self.utp_acceptor_port.unwrap_or(0),
-                                           self.static_contact_info.clone(),
-                                           self.our_keys.0.clone(),
-                                           self.event_tx.clone(),
-                                           self.connection_map.clone(),
-                                           self.mapping_context.clone())));
+        // [TODO]: we should find the exteranl address and if we are directly acessabel
+        // here for all listerners. Also listen on ip4 and 6 for all protocols -
+        // 2016-02-10 11:28pm
+        self.raii_udp_listener = Some(try!(RaiiUdpListener::new(self.utp_acceptor_port
+                                                                    .unwrap_or(0),
+                                                                self.static_contact_info.clone(),
+                                                                self.our_keys.0.clone(),
+                                                                self.event_tx.clone(),
+                                                                self.connection_map.clone(),
+                                                                self.mapping_context.clone())));
         Ok(())
     }
 
@@ -272,7 +288,10 @@ impl Service {
                    their_connection_info: TheirConnectionInfo) {
 
         let their_id = their_connection_info.id;
-        if !unwrap_result!(self.connection_map.lock()).get(&their_id).into_iter().all(Vec::is_empty) {
+        if !unwrap_result!(self.connection_map.lock())
+                .get(&their_id)
+                .into_iter()
+                .all(Vec::is_empty) {
             return;
         }
 
@@ -303,7 +322,7 @@ impl Service {
                         return;
                     }
                 }
-            };
+            }
 
             let res = PunchedUdpSocket::punch_hole(our_connection_info.udp_socket,
                                                    our_connection_info.priv_info,
@@ -346,9 +365,11 @@ impl Service {
 
     /// Lookup a mapped udp socket based on result_token
     pub fn prepare_connection_info(&mut self, result_token: u32) {
-        // FIXME: If the listeners are directly addressable (direct full cone or upnp mapped etc.
+        // FIXME: If the listeners are directly addressable (direct full cone or upnp
+        // mapped etc.
         // then our conact info is our static liseners
-        // for udp we can map another socket, but use same local port if accessable/mapped
+        // for udp we can map another socket, but use same local port if
+        // accessable/mapped
         // otherwise do following
         let mut peer_udp_listeners = Vec::with_capacity(100);
         for peer_contact_info in &*unwrap_result!(self.peer_contact_infos.lock()) {
@@ -359,24 +380,25 @@ impl Service {
         let event_tx = self.event_tx.clone();
 
         self.mapping_context.add_simple_servers(peer_udp_listeners);
-        let result_external_socket = MappedUdpSocket::new(&self.mapping_context)
-            .result_discard();
+        let result_external_socket = MappedUdpSocket::new(&self.mapping_context).result_discard();
         let mapping_context = self.mapping_context.clone();
         let our_pub_key = self.our_keys.0.clone();
         let _joiner = thread!("PrepareContactInfo", move || {
-            let (udp_socket, (our_priv_info, our_pub_info)) = match MappedUdpSocket::new(&mapping_context).result_discard() {
-                Ok(MappedUdpSocket { socket, endpoints }) => {
-                    (socket, gen_rendezvous_info(endpoints))
-                }
-                Err(e) => {
-                    let _ = event_tx.send(Event::ConnectionInfoPrepared(ConnectionInfoResult {
-                        result_token: result_token,
-                        result: Err(io::Error::new(io::ErrorKind::Other,
-                                                   "Cannot map UDP socket")),
-                    }));
-                    return;
-                }
-            };
+            let (udp_socket, (our_priv_info, our_pub_info)) =
+                match MappedUdpSocket::new(&mapping_context).result_discard() {
+                    Ok(MappedUdpSocket { socket, endpoints }) => {
+                        (socket, gen_rendezvous_info(endpoints))
+                    }
+                    Err(e) => {
+                        let _ =
+                            event_tx.send(Event::ConnectionInfoPrepared(ConnectionInfoResult {
+                                result_token: result_token,
+                                result: Err(io::Error::new(io::ErrorKind::Other,
+                                                           "Cannot map UDP socket")),
+                            }));
+                        return;
+                    }
+                };
 
 
             let send = Event::ConnectionInfoPrepared(ConnectionInfoResult {
@@ -420,16 +442,16 @@ mod test {
 
     use std::mem;
     use std::time::Duration;
-    use std::sync::{Mutex, Arc, Barrier};
+    use std::sync::{Arc, Barrier, Mutex};
     use std::sync::mpsc;
     use std::sync::mpsc::Receiver;
     use std::thread;
     use std::thread::JoinHandle;
-    use std::collections::{hash_map, HashMap};
+    use std::collections::{HashMap, hash_map};
 
     use crossbeam;
     use void::Void;
-    use maidsafe_utilities::event_sender::{MaidSafeObserver, MaidSafeEventCategory};
+    use maidsafe_utilities::event_sender::{MaidSafeEventCategory, MaidSafeObserver};
 
     fn get_event_sender()
         -> (::CrustEventSender,
@@ -446,8 +468,8 @@ mod test {
     }
 
     fn timebomb<R, F>(dur: Duration, f: F) -> R
-            where R: Send,
-                  F: Send + FnOnce() -> R
+        where R: Send,
+              F: Send + FnOnce() -> R
     {
         crossbeam::scope(|scope| {
             let thread_handle = thread::current();
@@ -486,7 +508,8 @@ mod test {
         if use_udp {
             unwrap_result!(service_0.start_listening_utp());
         }
-        // let service_0 finish bootstrap - since it is the zero state, it should not find any peer
+        // let service_0 finish bootstrap - since it is the zero state, it should not
+        // find any peer
         // to bootstrap
         {
             let event_rxd = unwrap_result!(event_rx_0.recv());
@@ -679,7 +702,8 @@ mod test {
         let (event_sender_1, category_rx_1, event_rx_1) = get_event_sender();
 
         let mut service_0 = unwrap_result!(Service::new(event_sender_0, 1234));
-        // let service_0 finish bootstrap - since it is the zero state, it should not find any peer
+        // let service_0 finish bootstrap - since it is the zero state, it should not
+        // find any peer
         // to bootstrap
         {
             let event_rxd = unwrap_result!(event_rx_0.recv());
@@ -690,7 +714,8 @@ mod test {
         }
 
         let mut service_1 = unwrap_result!(Service::new(event_sender_1, 1234));
-        // let service_0 finish bootstrap - since it is the zero state, it should not find any peer
+        // let service_0 finish bootstrap - since it is the zero state, it should not
+        // find any peer
         // to bootstrap
         {
             let event_rxd = unwrap_result!(event_rx_1.recv());
@@ -831,7 +856,8 @@ mod test {
                     connection_id_rx: ci_rx,
                     our_cis: Vec::new(),
                     our_index: index,
-                }, ci_tx)
+                },
+                 ci_tx)
             }
 
             fn make_connection_infos(&mut self, ci_txs: &[mpsc::Sender<TheirConnectionInfo>]) {
@@ -856,7 +882,9 @@ mod test {
 
             fn run(self, send_barrier: Arc<Barrier>, drop_barrier: Arc<Barrier>) -> JoinHandle<()> {
                 thread!("run!", move || {
-                    for (our_ci, their_ci) in self.our_cis.into_iter().zip(self.connection_id_rx.into_iter()) {
+                    for (our_ci, their_ci) in self.our_cis
+                                                  .into_iter()
+                                                  .zip(self.connection_id_rx.into_iter()) {
                         self.service.connect(our_ci, their_ci);
                     }
                     let mut their_ids = HashMap::new();
@@ -882,7 +910,7 @@ mod test {
                                 msg.push(n as u8);
                             }
                             self.service.send(their_id, msg);
-                        };
+                        }
                     }
 
                     for _ in 0..((NUM_SERVICES - 1) * NUM_MSGS) {
@@ -892,16 +920,16 @@ mod test {
                                 assert_eq!(msg.len(), MSG_SIZE);
                                 for m in msg {
                                     assert_eq!(n, m);
-                                };
+                                }
                                 match their_ids.entry(their_id.clone()) {
                                     hash_map::Entry::Occupied(mut oe) => {
                                         let next_msg = oe.get_mut();
                                         assert_eq!(*next_msg, n as u32);
                                         *next_msg += 1;
-                                    },
+                                    }
                                     hash_map::Entry::Vacant(ve) => panic!("impossible!"),
                                 }
-                            },
+                            }
                             m => panic!("Unexpected msg receiving NewMessage: {:?}", m),
                         }
                     }
@@ -912,10 +940,12 @@ mod test {
 
                     drop(self.service);
                     match self.event_rx.recv() {
-                        Ok(m) => match m {
-                            Event::LostPeer(..) => (),
-                            _ => panic!("Unexpected message when shutting down: {:?}", m),
-                        },
+                        Ok(m) => {
+                            match m {
+                                Event::LostPeer(..) => (),
+                                _ => panic!("Unexpected message when shutting down: {:?}", m),
+                            }
+                        }
                         Err(mpsc::RecvError) => (),
                     }
                 })

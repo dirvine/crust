@@ -40,40 +40,54 @@ use nat_traversal::{MappedUdpSocket, MappingContext, PrivRendezvousInfo, PubRend
 use slab::Slab;
 use void::Void;
 
-use sender_receiver::CrustMsg;
-use connection::{RaiiTcpAcceptor, UtpRendezvousConnectMode};
-use udp_listener::RaiiUdpListener;
 use static_contact_info::StaticContactInfo;
 use rand;
-use config_handler::Config;
-use connection::Connection;
 use error::Error;
 use ip::SocketAddrExt;
-use connection;
-use bootstrap;
-use bootstrap::RaiiBootstrap;
 
 use event::Event;
 use socket_addr::SocketAddr;
-use service::{Message, MioMessage};
-use utp_connections;
-use peer_id;
-use peer_id::PeerId;
 use peer::Peer;
+use connection_handler::ConnectionHandler;
 
 const TCP_LISTENER: Token = Token(0);
 const UDP_LISTENER: Token = Token(1);
 
-
-pub struct Connections {
-    pub socket: Socket,
+pub struct connections {
+    event_loop_tx: Sender<Event>,
     tx: mpsc::Sender<Message>,
-    peers: HashMap<Token, Peer>,
-    token_counter: usize,
+    tcp_listening_port: u16,
+    udp_lisetning_post: u16,
+    discovery_listening_port: u16,
 }
 
+
 impl Connections {
-    pub fn new(socket: Socket, tx: mpsc::Sender<Message>) -> Connections {
+    /// Allows a user to select preferred ports for tcp udp listeners
+    /// If these are 0 then any port will be selected (from the OS)
+    /// IF discovery port is set to 0 then discovery is disabled
+    pub fn new(tcp_port: u16,
+               udp_port: u16,
+               discovery_port: u16,
+               tx: mpsc::Sender<Message>)
+               -> Result<Connections, Error> {
+
+        let mut event_loop = EventLoop::new().unwrap();
+        let event_loop_tx = event_loop.channel();
+
+        thread::spawn(move || {
+            let tcp_listener_socket = try!(TcpListener::bind(&format!("0.0.0.0:{}", port)[..]));
+            let mut server = WebSocketServer::new(server_socket, tx);
+
+            event_loop.register(&server.socket,
+                                SERVER_TOKEN,
+                                EventSet::readable(),
+                                PollOpt::edge())
+                      .unwrap();
+
+            event_loop.run(&mut server).unwrap();
+        });
+
         Connections {
             socket: socket,
             tx: tx,
@@ -82,8 +96,12 @@ impl Connections {
         }
     }
 
+    fn listen_tcp(&self, port: u16) {}
+
     fn add_peer(&mut self,
-                client_socket: TcpStream,
+                client_socket: Socket,
+                secret_key: &SecretKey,
+                their_public_key: &PublicKey,
                 tx: mpsc::Sender<Message>,
                 event_loop_tx: Sender<MioMessage>)
                 -> Token {
@@ -91,10 +109,7 @@ impl Connections {
         self.token_counter += 1;
 
         self.clients.insert(new_token,
-                            WebSocketClient::new(client_socket,
-                                                 new_token,
-                                                 tx.clone(),
-                                                 event_loop_tx));
+                            Peer::new(client_socket, new_token, tx.clone(), event_loop_tx));
         new_token
     }
 
@@ -109,103 +124,5 @@ impl Connections {
     pub fn send_message(&mut self, token: Token, msg: &[u8]) -> Result<()> {
         let peer = try!(self.peers.get_mut(&token));
         peer.send_message(msg)
-    }
-}
-
-impl Handler for Connections {
-    type Timeout = usize;
-    type Message = Message;
-
-    fn ready(&mut self, event_loop: &mut EventLoop<Self>, token: Token, events: EventSet) {
-
-        if events.is_readable() {
-            match token {
-                TCP_LISTENER => {
-                    let peer_socket = match self.socket.accept() {
-                        Ok(Some((sock, addr))) => sock,
-                        Ok(None) => unreachable!(),
-                        Err(e) => {
-                            println!("Accept error: {}", e);
-                            return;
-                        }
-                    };
-
-                    let new_token = Token(self.token_counter);
-                    self.peers.insert(new_token, WebSocketpeer::new(peer_socket));
-                    self.token_counter += 1;
-
-                    event_loop.register(&self.peers[&new_token].socket,
-                                        new_token,
-                                        EventSet::readable(),
-                                        PollOpt::edge() | PollOpt::oneshot())
-                              .unwrap();
-                }
-                token => {
-                    let mut peer = self.peers.get_mut(&token).unwrap();
-                    peer.read();
-                    event_loop.reregister(&peer.socket,
-                                          token,
-                                          peer.interest,
-                                          PollOpt::edge() | PollOpt::oneshot())
-                              .unwrap();
-                }
-            }
-        }
-
-        if events.is_writable() {
-            let mut peer = self.peers.get_mut(&token).unwrap();
-            peer.write();
-            event_loop.reregister(&peer.socket,
-                                  token,
-                                  peer.interest,
-                                  PollOpt::edge() | PollOpt::oneshot())
-                      .unwrap();
-        }
-
-    }
-
-
-
-    fn notify(&mut self, event_loop: &mut EventLoop<Self>, msg: Self::Message) {
-        match msg {
-            MioMessage::RegisterObserver(observer) => {
-                self.observers.push(observer);
-            }
-            MioMessage::SetBroadcastListen(status) => {
-                self.broadcast_listen = status;
-            }
-            MioMessage::SeekPeers => {
-                match self.socket
-                          .send_to(&self.serialised_seek_peers_request, &self.seek_peers_on) {
-                    Ok(Some(_)) => {
-                        if let Err(err) = event_loop.reregister(&self.socket,
-                                                                DISCOVERY,
-                                                                EventSet::readable(),
-                                                                PollOpt::edge() |
-                                                                PollOpt::oneshot()) {
-                            error!("{:?}", err);
-                            event_loop.shutdown();
-                        }
-                    }
-                    Ok(None) => {
-                        if let Err(err) = event_loop.reregister(&self.socket,
-                                                                SEEK_PEERS,
-                                                                EventSet::writable(),
-                                                                PollOpt::edge() |
-                                                                PollOpt::oneshot()) {
-                            error!("{:?}", err);
-                            event_loop.shutdown();
-                        }
-                    }
-                    Err(err) => {
-                        error!("{:?}", err);
-                        event_loop.shutdown();
-                    }
-                }
-            }
-            MioMessage::Shutdown => {
-                event_loop.shutdown();
-            }
-        }
     }
 }

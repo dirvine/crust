@@ -38,7 +38,7 @@ pub struct Config {
 impl Config {
     pub fn make_default() -> Config {
         Config {
-            hard_coded_contacts: vec![] /* No hardcoded endpoints */,
+            hard_coded_contacts: vec![], // No hardcoded endpoints
             tcp_acceptor_port: None,
             utp_acceptor_port: None,
             mapper_servers: vec![],
