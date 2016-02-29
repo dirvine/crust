@@ -27,6 +27,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net;
 use std::sync::{Arc, Mutex};
+use std::sync::mpsc;
 use service_discovery::ServiceDiscovery;
 use sodiumoxide;
 use sodiumoxide::crypto::box_;
@@ -48,14 +49,14 @@ use ip::SocketAddrExt;
 use event::Event;
 use socket_addr::SocketAddr;
 use peer::Peer;
-use connection_handler::ConnectionHandler;
+use connection_handler::{MioMessage, ConnectionHandler};
 
 const TCP_LISTENER: Token = Token(0);
 const UDP_LISTENER: Token = Token(1);
 
-pub struct connections {
-    event_loop_tx: Sender<Event>,
-    tx: mpsc::Sender<Message>,
+pub struct Connections {
+    event_loop_tx: Sender<MioMessage>,
+    tx: mpsc::Sender<Event>,
     tcp_listening_port: u16,
     udp_lisetning_post: u16,
     discovery_listening_port: u16,
@@ -69,7 +70,7 @@ impl Connections {
     pub fn new(tcp_port: u16,
                udp_port: u16,
                discovery_port: u16,
-               tx: mpsc::Sender<Message>)
+               tx: mpsc::Sender<Event>)
                -> Result<Connections, Error> {
 
         let mut event_loop = EventLoop::new().unwrap();
@@ -77,7 +78,7 @@ impl Connections {
 
         thread::spawn(move || {
             let tcp_listener_socket = try!(TcpListener::bind(&format!("0.0.0.0:{}", port)[..]));
-            let mut server = WebSocketServer::new(server_socket, tx);
+            let mut server = ConnectionHandler::new(server_socket, tx);
 
             event_loop.register(&server.socket,
                                 SERVER_TOKEN,
