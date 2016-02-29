@@ -84,18 +84,14 @@ impl ConnectionHandler {
 
     }
     // peers who connect to our "listeners" will be automatically added by the
-    // ConnecitonHandler
+    // ConnectionHandler
     fn add_peer(&mut self,
                 client_socket: TcpStream,
                 tx: mpsc::Sender<Event>,
-                event_loop_tx: Sender<MioMessage>)
-                -> Token {
-        let token = Token(self.token_counter);
-        self.token_counter += 1;
-
-        self.clients.insert(token,
-                            Peer::new_unknown(client_socket, token, tx.clone(), event_loop_tx));
-        token
+                event_loop_tx: Sender<MioMessage>) {
+        let token = self.next_token();
+        let mut peer = Peer::new_unknown(client_socket, token, tx.clone(), event_loop_tx);
+        self.clients.insert(token, peer);
     }
 
     pub fn get_peers(&self) -> Vec<Token> {
@@ -109,6 +105,12 @@ impl ConnectionHandler {
     pub fn send_message(&mut self, token: Token, msg: &[u8]) -> Result<()> {
         let peer = try!(self.peers.get_mut(&token));
         peer.send_message(msg)
+    }
+
+    pub fn next_token(&self) -> Token {
+        let token = Token(self.token_counter);
+        self.token_counter += 1;
+        token
     }
 }
 

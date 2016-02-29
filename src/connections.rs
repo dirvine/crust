@@ -27,6 +27,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net;
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::sync::mpsc;
 use service_discovery::ServiceDiscovery;
 use sodiumoxide;
@@ -48,7 +49,7 @@ use ip::SocketAddrExt;
 
 use event::Event;
 use socket_addr::SocketAddr;
-use peer::Peer;
+use peer::{Socket, Peer};
 use connection_handler::{MioMessage, ConnectionHandler};
 
 const TCP_LISTENER: Token = Token(0);
@@ -79,14 +80,14 @@ impl Connections {
 
         let mut event_loop = EventLoop::new().unwrap();
         let event_loop_tx = event_loop.channel();
+        let mut handler = ConnectionHandler::new(event_loop_tx,
+                                                 tx.clone(),
+                                                 TOKEN_COUNTER_START,
+                                                 contact_info.clone());
 
         thread::spawn(move || {
             let tcp_listener_socket = try!(TcpListener::bind(&format!("0.0.0.0:{}", tcp_port)[..]));
             let udp_listener_socket = try!(UdpSocket::bind(&format!("0.0.0.0:{}", udp_port)[..]));
-            let mut handler = ConnectionHandler::new(event_loop_tx,
-                                                     tx.clone(),
-                                                     TOKEN_COUNTER_START,
-                                                     contact_info.clone());
 
             event_loop.register(&tcp_listener_socket,
                                 TCP_LISTENER,
@@ -99,7 +100,7 @@ impl Connections {
                                 PollOpt::edge())
                       .unwrap();
 
-            event_loop.run(&mut handler).unwrap();
+            event_loop.run(&mut handler.clone()).unwrap();
         });
 
         Connections {
@@ -117,7 +118,7 @@ impl Connections {
                 client_socket: Socket,
                 secret_key: &SecretKey,
                 their_public_key: &PublicKey,
-                tx: mpsc::Sender<Message>,
+                tx: mpsc::Sender<Event>,
                 event_loop_tx: Sender<MioMessage>)
                 -> Token {
         let new_token = Token(self.token_counter);
