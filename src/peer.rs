@@ -41,6 +41,7 @@ use nat_traversal::{MappedUdpSocket, MappingContext, PrivRendezvousInfo, PubRend
 use slab::Slab;
 use void::Void;
 use secure_serialisation;
+use maidsafe_utilities;
 use static_contact_info::StaticContactInfo;
 use rand;
 use error::Error;
@@ -82,6 +83,7 @@ struct Peer {
     outgoing: Vec<u8>,
     data_in: ByteBuf,
     our_Secret_key: &SecretKey,
+    our_public_key: &PublicKey,
     precomputed_key: Option<PrecomputedKey>,
     their_public_key: Option<PublicKey>, // may dissapear unless we do secure bootstrap
     close: bool,
@@ -95,6 +97,7 @@ impl Peer {
     pub fn new(socket: Socket,
                their_pub_key: &PublicKey,
                our_secret_key: &SecretKey,
+               our_public_key: &PublicKey,
                token: Token,
                service_sink: mpsc::Sender<Vec<u8>>,
                mio_sink: Sender<MioMessage>,
@@ -110,7 +113,8 @@ impl Peer {
             bytes_out: ByteBuf::neww(),
             outgoing: Vec::new(),
             data_in: ByteBuf::new(),
-            our_Secret_key: &SecretKey,
+            our_secret_key: &SecretKey,
+            our_public_key: &PublicKey,
             precomputed_key: pre_key,
             their_public_key: None, // may dissapear unless we do secure bootstrap
             close: false,
@@ -172,34 +176,56 @@ impl Peer {
 
     fn serialise_message(&self, msg: &[u8]) -> Result<&[u8], Error> {
         if let Some(pre_key) = self.precomputed_key {
-            try!(secure_serialisation::pre_compute_serialise::<Vec<u8>>(msg, pre_key))
+            try!(secure_serialisation::pre_computed_serialise::<Vec<u8>>(msg, pre_key))
         } else if let Some(pub_key) = self.public_key {
             try!(secure_serialisation::anonymous_serialise::<Vec<u8>>(msg, pub_key))
         } else {
-            try!(maidsafe_utilities::Serialistaion::serialise(msg))
+            try!(maidsafe_utilities::serialisation::serialise(msg))
         }
     }
 
     fn write_secure_handshake(&mut self) {
         // send our handshake first
         let handshake =
-            secure_serialisation::pre_computed_serialise::<HandShake>(&contact_info,
-                                                                      &self.pre_key,
-                                                                      PeerConnectionType::Full);
+            secure_serialisation::pre_computed_serialise::<HandShake>(HandShake {
+                                                                      listeners: self.contact_info,
+                                                                      public_key: self.our_public_key,
+                                                                      connection_type: PeerConnectionType::Full
+                                                                      },
+                                                                      &self.pre_key);
         self.socket.try_write(handshake);
+        // Change the state
+        self.state = PeerState::Connected;
+        // Send the connection event
+        self.tx.send(Event::NewPeer(self.token), PeerConnectionType::Full);
         self.interest.remove(EventSet::writable());
         self.interest.insert(EventSet::readable());
     }
 
     fn write_handshake(&mut self) {
+        let handshake = match self.their_public_key {
+            Some(ref key) => secure_serialisation::anonymous_serialise::<HandShake>(HandShake {
+                                                                      listeners: self.contact_info,
+                                                                      public_key: self.our_public_key,
+                                                                      connection_type: PeerConnectionType::Bootstrap
+                                                                      },
+                                                                     key),
+            None => {
+                maidsafe_utilities::serialisation::serialise::<HandShake>(HandShake {
+                    listeners: self.contact_info,
+                    public_key: self.our_public_key,
+                    connection_type: PeerConnectionType::Bootstrap,
+                })
+            }
+        };
 
-        self.socket.try_write(response.as_bytes()).unwrap();
+        self.socket.try_write(handshake.as_bytes()).unwrap();
 
         // Change the state
         self.state = PeerState::Connected;
 
         // Send the connection event
-        self.tx.send(Message::Connect(self.token));
+        self.tx.send(Event::NewPeer(self.token), PeerConnectionType::Bootstrap);
 
         self.interest.remove(EventSet::writable());
         self.interest.insert(EventSet::readable());
@@ -221,7 +247,7 @@ impl Peer {
                     trace!("{:?} wrote all bytes; switching to reading", self.token);
                     if self.close {
                         trace!("{:?} closing connection", self.token);
-                        self.socket.shutdown(Shutdown::Write);
+                        // self.socket.shutdown(Shutdown::Write);
                         self.tx.send(Event::LostPeer(self.token));
                     }
                     self.interest.remove(EventSet::writable());
@@ -259,7 +285,7 @@ impl Peer {
         };
         if self.close {
             trace!("{:?} closing connection", self.token);
-            self.socket.shutdown(Shutdown::Write);
+            // self.socket.shutdown(Shutdown::Write);
             self.tx.send(Event::LostPeer(self.token));
         };
 

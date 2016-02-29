@@ -71,13 +71,13 @@ impl ConnectionHandler {
     // ConnecitonHandler
     fn add_peer(&mut self,
                 client_socket: TcpStream,
-                tx: mpsc::Sender<Message>,
+                tx: mpsc::Sender<Event>,
                 event_loop_tx: Sender<MioMessage>)
                 -> Token {
         let token = Token(self.token_counter);
         self.token_counter += 1;
 
-        self.clients.insert(new_token,
+        self.clients.insert(token,
                             Peer::new_unknown(client_socket, token, tx.clone(), event_loop_tx));
         token
     }
@@ -98,7 +98,7 @@ impl ConnectionHandler {
 
 impl Handler for ConnectionHandler {
     type Timeout = usize;
-    type Message = Message;
+    type Message = Vec<u8>;
 
     fn ready(&mut self, event_loop: &mut EventLoop<Self>, token: Token, events: EventSet) {
 
@@ -115,7 +115,7 @@ impl Handler for ConnectionHandler {
                     };
 
                     let new_token = Token(self.token_counter);
-                    self.peers.insert(new_token, WebSocketpeer::new(peer_socket));
+                    self.peers.insert(new_token, Peer::new(peer_socket, XXX));
                     self.token_counter += 1;
 
                     event_loop.register(&self.peers[&new_token].socket,
