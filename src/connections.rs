@@ -53,13 +53,14 @@ use connection_handler::{MioMessage, ConnectionHandler};
 
 const TCP_LISTENER: Token = Token(0);
 const UDP_LISTENER: Token = Token(1);
+const TOKEN_COUNTER_START: Token = Token(2);
 
 pub struct Connections {
-    event_loop_tx: Sender<MioMessage>,
+    handler: ConnectionHandler,
     tx: mpsc::Sender<Event>,
-    tcp_listening_port: u16,
-    udp_lisetning_post: u16,
-    discovery_listening_port: u16,
+    contact_info: Arc<Mutex<StaticContactInfo>>,
+    our_Secret_key: SecretKey,
+    our_public_key: PublicKey,
 }
 
 
@@ -70,30 +71,43 @@ impl Connections {
     pub fn new(tcp_port: u16,
                udp_port: u16,
                discovery_port: u16,
-               tx: mpsc::Sender<Event>)
+               tx: mpsc::Sender<Event>,
+               contact_info: Arc<Mutex<StaticContactInfo>>)
                -> Result<Connections, Error> {
+        sodiumoxide::init();
+        let our_keys = box_::gen_keypair();
 
         let mut event_loop = EventLoop::new().unwrap();
         let event_loop_tx = event_loop.channel();
 
         thread::spawn(move || {
-            let tcp_listener_socket = try!(TcpListener::bind(&format!("0.0.0.0:{}", port)[..]));
-            let mut server = ConnectionHandler::new(server_socket, tx);
+            let tcp_listener_socket = try!(TcpListener::bind(&format!("0.0.0.0:{}", tcp_port)[..]));
+            let udp_listener_socket = try!(UdpSocket::bind(&format!("0.0.0.0:{}", udp_port)[..]));
+            let mut handler = ConnectionHandler::new(event_loop_tx,
+                                                     tx.clone(),
+                                                     TOKEN_COUNTER_START,
+                                                     contact_info.clone());
 
-            event_loop.register(&server.socket,
-                                SERVER_TOKEN,
+            event_loop.register(&tcp_listener_socket,
+                                TCP_LISTENER,
+                                EventSet::readable(),
+                                PollOpt::edge())
+                      .unwrap();
+            event_loop.register(&udp_listener_socket,
+                                UDP_LISTENER,
                                 EventSet::readable(),
                                 PollOpt::edge())
                       .unwrap();
 
-            event_loop.run(&mut server).unwrap();
+            event_loop.run(&mut handler).unwrap();
         });
 
         Connections {
-            socket: socket,
+            handler: handler,
             tx: tx,
-            token_counter: 2,
-            clients: HashMap::new(),
+            contact_info: contact_info,
+            our_secret_key: our_keys.0,
+            our_public_key: our_keys.1,
         }
     }
 

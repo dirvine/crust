@@ -82,12 +82,12 @@ struct Peer {
     bytes_out: ByteBuf,
     outgoing: Vec<u8>,
     data_in: ByteBuf,
-    our_Secret_key: &SecretKey,
+    our_Secret_key: &SecretKey, // Only used to create a pre_computed_key or decrypt a bootstrap
     our_public_key: &PublicKey,
     precomputed_key: Option<PrecomputedKey>,
     their_public_key: Option<PublicKey>, // may dissapear unless we do secure bootstrap
     close: bool,
-    constact_info: StaticContactInfo, // TODO - do not keep this copy here!!
+    contact_info: Option<StaticContactInfo>, // Option to save space, we can zero it out after use
 }
 
 impl Peer {

@@ -48,11 +48,12 @@ use ip::SocketAddrExt;
 use event::Event;
 use socket_addr::SocketAddr;
 use peer::Peer;
+use static_contact_info::StaticContactInfo;
 
 /// internal messages to mio event loop
 pub enum MioMessage {
     Reregister(Token),
-    GetPeers(mpsc::Sender<Vec<usize>>),
+    GetPeers(mpsc::Sender<Event>),
     SendMessage(Vec<u8>),
     ShutDown,
 }
@@ -60,13 +61,28 @@ pub enum MioMessage {
 
 
 pub struct ConnectionHandler {
-    event_loop_tx: Sender<Event>,
-    tx: mpsc::Sender<Vec<u8>>,
+    event_loop_tx: Sender<MioMessage>,
+    tx: mpsc::Sender<Event>,
     peers: Slab<Token, Peer>,
     token_counter: usize,
+    contact_info: Arc<Mutex<StaticContactInfo>>,
 }
 
 impl ConnectionHandler {
+    fn new(event_loop_tx: Sender<MioMessage>,
+           tx: mpsc::Sender<Event>,
+           token_counter: Token,
+           contact_info: Arc<Mutex<StaticContactInfo>>)
+           -> ConnectionHandler {
+        ConnectionHandler {
+            event_loop_tx: event_loop_tx,
+            tx: tx,
+            peers: Slab::new(),
+            token_counter: token_counter,
+            contact_info: contact_info,
+        }
+
+    }
     // peers who connect to our "listeners" will be automatically added by the
     // ConnecitonHandler
     fn add_peer(&mut self,
