@@ -68,7 +68,7 @@ pub struct TheirConnectionInfo {
     static_contact_info: StaticContactInfo,
 }
 /// Identify the type of connection we are after
-#[derive(RustcEncodable, RustcDecodable)]
+#[derive(Debug, RustcEncodable, RustcDecodable)]
 pub enum PeerConnectionType {
     /// One way encrypted or plain connection only
     Bootstrap,

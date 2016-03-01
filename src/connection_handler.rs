@@ -28,6 +28,7 @@ use std::io;
 use std::net;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
+use std::rc::Rc;
 use service_discovery::ServiceDiscovery;
 use sodiumoxide;
 use sodiumoxide::crypto::box_;
@@ -47,7 +48,7 @@ use ip::SocketAddrExt;
 
 use event::Event;
 use socket_addr::SocketAddr;
-use peer::Peer;
+use peer::{Socket, Peer};
 use static_contact_info::StaticContactInfo;
 
 /// internal messages to mio event loop
@@ -63,16 +64,20 @@ pub enum MioMessage {
 pub struct ConnectionHandler {
     event_loop_tx: Sender<MioMessage>,
     tx: mpsc::Sender<Event>,
-    peers: Slab<Token, Peer>,
+    peers: Slab<Peer, Token>,
     token_counter: usize,
     contact_info: Arc<Mutex<StaticContactInfo>>,
+    our_secret_key: Rc<SecretKey>,
+    our_public_key: Rc<PublicKey>,
 }
 
 impl ConnectionHandler {
     fn new(event_loop_tx: Sender<MioMessage>,
            tx: mpsc::Sender<Event>,
            token_counter: Token,
-           contact_info: Arc<Mutex<StaticContactInfo>>)
+           contact_info: Arc<Mutex<StaticContactInfo>>,
+           our_secret_key: Rc<SecretKey>,
+           our_public_key: Rc<PublicKey>)
            -> ConnectionHandler {
         ConnectionHandler {
             event_loop_tx: event_loop_tx,
@@ -80,6 +85,8 @@ impl ConnectionHandler {
             peers: Slab::new(),
             token_counter: token_counter,
             contact_info: contact_info,
+            our_secret_key: our_secret_key,
+            our_public_key: our_public_key,
         }
 
     }
@@ -102,7 +109,7 @@ impl ConnectionHandler {
         self.clients.remove(tkn)
     }
 
-    pub fn send_message(&mut self, token: Token, msg: &[u8]) -> Result<()> {
+    pub fn send_message(&mut self, token: Token, msg: &[u8]) -> Result<(), Error> {
         let peer = try!(self.peers.get_mut(&token));
         peer.send_message(msg)
     }
@@ -116,7 +123,7 @@ impl ConnectionHandler {
 
 impl Handler for ConnectionHandler {
     type Timeout = usize;
-    type Message = Vec<u8>;
+    type Message = MioMessage;
 
     fn ready(&mut self, event_loop: &mut EventLoop<Self>, token: Token, events: EventSet) {
 
@@ -132,11 +139,15 @@ impl Handler for ConnectionHandler {
                         }
                     };
 
-                    let new_token = Token(self.token_counter);
-                    self.peers.insert(new_token, Peer::new(peer_socket, XXX));
-                    self.token_counter += 1;
+                    let new_token = self.next_token();
+                    let peer_socket_ref = &peer_socket;
+                    let peer = Peer::new_unknown(peer_socket,
+                                                 new_token,
+                                                 self.tx.clone(),
+                                                 self.event_loop_tx);
+                    self.peers.insert(new_token, peer);
 
-                    event_loop.register(&self.peers[&new_token].socket,
+                    event_loop.register(peer_socket_ref,
                                         new_token,
                                         EventSet::readable(),
                                         PollOpt::edge() | PollOpt::oneshot())
@@ -145,7 +156,11 @@ impl Handler for ConnectionHandler {
                 token => {
                     let mut peer = self.peers.get_mut(&token).unwrap();
                     peer.read();
-                    event_loop.reregister(&peer.socket,
+                    let peer_sock = match peer.socket {
+                        Socket::Tcp(socket) => socket,
+                        Socket::Udp(socket) => socket,
+                    };
+                    event_loop.reregister(&peer.sock,
                                           token,
                                           peer.interest,
                                           PollOpt::edge() | PollOpt::oneshot())

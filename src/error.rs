@@ -23,6 +23,10 @@
 // and limitations
 // relating to use of the SAFE Network Software.
 use config_file_handler;
+use mio;
+use connection_handler;
+use secure_serialisation;
+use maidsafe_utilities;
 
 /// Error types.
 #[derive(Debug)]
@@ -43,8 +47,32 @@ pub enum Error {
     JsonParserError(::rustc_serialize::json::ParserError),
     /// Wrapper for a `::cbor::CborError`
     CborError(::cbor::CborError),
+    /// Errors form mio
+    MioError(mio::notify::NotifyError<connection_handler::MioMessage>),
+    /// Secure serialisation errors
+    SecureSerialisationError(secure_serialisation::Error),
+    /// Serialisation errors
+    SerialisationError(maidsafe_utilities::serialisation::SerialisationError),
     /// connection closed
     ConnectionClosed,
+}
+
+impl From<maidsafe_utilities::serialisation::SerialisationError> for Error {
+    fn from(error: maidsafe_utilities::serialisation::SerialisationError) -> Self {
+        Error::SerialisationError(error)
+    }
+}
+
+impl From<secure_serialisation::Error> for Error {
+    fn from(error: secure_serialisation::Error) -> Self {
+        Error::SecureSerialisationError(error)
+    }
+}
+
+impl From<mio::notify::NotifyError<connection_handler::MioMessage>> for Error {
+    fn from(error: mio::notify::NotifyError<connection_handler::MioMessage>) -> Self {
+        Error::MioError(error);
+    }
 }
 
 impl From<::std::env::VarError> for Error {

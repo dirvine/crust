@@ -25,7 +25,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io;
+use std::io::{Read, Write};
 use std::net;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
 use service_discovery::ServiceDiscovery;
@@ -57,20 +59,20 @@ use connection_handler::MioMessage;
 #[derive(RustcEncodable, RustcDecodable)]
 pub struct HandShake {
     listeners: StaticContactInfo,
-    public_key: Option<PublicKey>,
+    public_key: PublicKey,
     connection_type: PeerConnectionType,
 }
 
 /// socket type
 pub enum Socket {
-    Tcp(TcpStream), // TODO - use socket make stream later (nat_traversal)
-    Udp(UdpSocket),
+    Tcp(TcpStream),
+    Udp(UdpSocket, net::SocketAddr),
 }
 
 #[derive(PartialEq)]
 enum PeerState {
     AwaitingHandshake,
-    HadShakeRresponse,
+    HandShakeResponse,
     Connected,
 }
 
@@ -79,15 +81,17 @@ struct Peer {
     interest: EventSet,
     state: PeerState,
     tx: mpsc::Sender<Event>,
+    mio_sink: Sender<MioMessage>,
     bytes_out: ByteBuf,
     outgoing: Vec<u8>,
     data_in: ByteBuf,
-    our_Secret_key: &SecretKey, // Only used to create a pre_computed_key or decrypt a bootstrap
-    our_public_key: &PublicKey,
+    our_secret_key: Rc<SecretKey>, // Only used to create a pre_computed_key or decrypt a bootstrap
+    our_public_key: Rc<PublicKey>,
     precomputed_key: Option<PrecomputedKey>,
     their_public_key: Option<PublicKey>, // may dissapear unless we do secure bootstrap
     close: bool,
-    contact_info: Option<StaticContactInfo>, // Option to save space, we can zero it out after use
+    contact_info: Arc<Mutex<StaticContactInfo>>,
+    token: Token, // bad we have two copies of this now
 }
 
 impl Peer {
@@ -96,70 +100,78 @@ impl Peer {
     /// Hahdshake is sent on connect
     pub fn new(socket: Socket,
                their_pub_key: &PublicKey,
-               our_secret_key: &SecretKey,
-               our_public_key: &PublicKey,
+               our_secret_key: Rc<SecretKey>,
+               our_public_key: Rc<PublicKey>,
                token: Token,
-               service_sink: mpsc::Sender<Vec<u8>>,
+               service_sink: mpsc::Sender<Event>,
                mio_sink: Sender<MioMessage>,
-               contact_info: StaticContactInfo)
+               contact_info: Arc<Mutex<StaticContactInfo>>)
                -> Peer {
 
-        let pre_key = secure_serialisation::precompute(their_pub_key, our_secret_key);
-        let peer = Peer {
+        let pre_key = secure_serialisation::precompute(their_pub_key, &*our_secret_key);
+        Peer {
             socket: socket,
             interest: EventSet::readable(),
-            state: PeerState::HandshakeResponse,
+            state: PeerState::HandShakeResponse,
             tx: service_sink,
-            bytes_out: ByteBuf::neww(),
+            mio_sink: mio_sink,
+            bytes_out: ByteBuf::none(),
             outgoing: Vec::new(),
-            data_in: ByteBuf::new(),
-            our_secret_key: &SecretKey,
-            our_public_key: &PublicKey,
-            precomputed_key: pre_key,
+            data_in: ByteBuf::none(),
+            our_secret_key: our_secret_key,
+            our_public_key: our_public_key,
+            precomputed_key: Some(pre_key),
             their_public_key: None, // may dissapear unless we do secure bootstrap
             close: false,
-            constact_info: contact_info,
-        };
+            contact_info: contact_info,
+            token: token,
+        }
     }
 
     /// Peer added from listener, we wait on it telling us who it is!
     /// Await the intial handshake
     fn new_unknown(socket: Socket,
+                   our_secret_key: Rc<SecretKey>,
+                   our_public_key: Rc<PublicKey>,
                    token: Token,
-                   service_sink: mpsc::Sender<Vec<u8>>,
+                   service_sink: mpsc::Sender<Event>,
                    mio_sink: Sender<MioMessage>,
-                   contact_info: StaticContactInfo)
+                   contact_info: Arc<Mutex<StaticContactInfo>>)
                    -> Peer {
         Peer {
             socket: socket,
             interest: EventSet::readable(),
             state: PeerState::AwaitingHandshake,
             tx: service_sink,
-            bytes_out: ByteBuf::neww(),
+            mio_sink: mio_sink,
+            bytes_out: ByteBuf::none(),
             outgoing: Vec::new(),
-            data_in: ByteBuf::new(),
+            data_in: ByteBuf::none(),
+            our_secret_key: our_secret_key,
+            our_public_key: our_public_key,
             precomputed_key: None,
             their_public_key: None, // may dissapear unless we do secure bootstrap
             close: false,
             contact_info: contact_info,
+            token: token,
         }
 
     }
 
     /// Queues message for sending, returns number of messgaes wiating to go to this peer
-    pub fn send_message(&mut self, msg: &[u8]) -> Result<usize, Error> {
-        if self.closed {
-            return Error::ConnectionClosed;
+    pub fn send_message(&mut self, msg: &Vec<u8>, token: Token) -> Result<usize, Error> {
+        if self.close {
+            return Err(Error::ConnectionClosed);
         }
         let bytes = try!(self.serialise_message(msg));
 
-        self.outgoing.push(bytes);
+        self.outgoing.push_all(&bytes);
 
         if self.interest.is_readable() {
             self.interest.insert(EventSet::writable());
             self.interest.remove(EventSet::readable());
-            try!(self.event_loop_tx
-                     .send(MioMessage::Reregister(self.token)));
+            try!(self.mio_sink
+                     .send(MioMessage::Reregister(token)));
         }
 
         Ok(self.outgoing.len())
@@ -168,52 +180,55 @@ impl Peer {
     pub fn write(&mut self) {
         match self.state {
             PeerState::AwaitingHandshake => self.write_secure_handshake(),
-            PeerState::HandshakeResponse => self.write_handshake(),
+            PeerState::HandShakeResponse => self.write_handshake(),
             PeerState::Connected => self.write_messages(),
             _ => {}
         }
     }
 
-    fn serialise_message(&self, msg: &[u8]) -> Result<&[u8], Error> {
+    fn serialise_message(&self, msg: &Vec<u8>) -> Result<Vec<u8>, Error> {
         if let Some(pre_key) = self.precomputed_key {
-            try!(secure_serialisation::pre_computed_serialise::<Vec<u8>>(msg, pre_key))
-        } else if let Some(pub_key) = self.public_key {
-            try!(secure_serialisation::anonymous_serialise::<Vec<u8>>(msg, pub_key))
+            Ok(try!(secure_serialisation::pre_computed_serialise::<Vec<u8>>(msg, &pre_key)))
+        } else if let Some(pub_key) = self.their_public_key {
+            Ok(try!(secure_serialisation::anonymous_serialise::<Vec<u8>>(msg, &pub_key)))
         } else {
-            try!(maidsafe_utilities::serialisation::serialise(msg))
+            Ok(try!(maidsafe_utilities::serialisation::serialise(msg)))
         }
     }
 
     fn write_secure_handshake(&mut self) {
         // send our handshake first
         let handshake =
-            secure_serialisation::pre_computed_serialise::<HandShake>(HandShake {
-                                                                      listeners: self.contact_info,
-                                                                      public_key: self.our_public_key,
+            secure_serialisation::pre_computed_serialise::<HandShake>(&HandShake {
+                                                                      listeners: *self.contact_info.lock().unwrap(),
+                                                                      public_key: *self.our_public_key,
                                                                       connection_type: PeerConnectionType::Full
                                                                       },
-                                                                      &self.pre_key);
-        self.socket.try_write(handshake);
+                                                                      &self.precomputed_key.unwrap()).unwrap();
+        let socket = match self.socket {
+            Socket::Tcp(mut sock) => sock.write(&handshake),
+            Socket::Udp(mut sock, ref sock_addr) => unimplemented!(), // sock.send_to(&handshake, sock_addr),
+        };
         // Change the state
         self.state = PeerState::Connected;
         // Send the connection event
-        self.tx.send(Event::NewPeer(self.token), PeerConnectionType::Full);
+        self.tx.send(Event::NewPeer(self.token.as_usize(), PeerConnectionType::Full));
         self.interest.remove(EventSet::writable());
         self.interest.insert(EventSet::readable());
     }
 
     fn write_handshake(&mut self) {
         let handshake = match self.their_public_key {
-            Some(ref key) => secure_serialisation::anonymous_serialise::<HandShake>(HandShake {
-                                                                      listeners: self.contact_info,
-                                                                      public_key: self.our_public_key,
+            Some(ref key) => secure_serialisation::anonymous_serialise::<HandShake>(&HandShake {
+                                                                      listeners: *self.contact_info.lock().unwrap(),
+                                                                      public_key: *self.our_public_key,
                                                                       connection_type: PeerConnectionType::Bootstrap
                                                                       },
                                                                      key),
             None => {
-                maidsafe_utilities::serialisation::serialise::<HandShake>(HandShake {
-                    listeners: self.contact_info,
-                    public_key: self.our_public_key,
+                maidsafe_utilities::serialisation::serialise::<HandShake>(&HandShake {
+                    listeners: *self.contact_info.lock().unwrap(),
+                    public_key: *self.our_public_key,
                     connection_type: PeerConnectionType::Bootstrap,
                 })
             }

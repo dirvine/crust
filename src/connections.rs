@@ -26,6 +26,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::sync::mpsc;
@@ -60,8 +61,8 @@ pub struct Connections {
     handler: ConnectionHandler,
     tx: mpsc::Sender<Event>,
     contact_info: Arc<Mutex<StaticContactInfo>>,
-    our_Secret_key: SecretKey,
-    our_public_key: PublicKey,
+    our_secret_key: Rc<SecretKey>,
+    our_public_key: Rc<PublicKey>,
 }
 
 
@@ -73,10 +74,10 @@ impl Connections {
                udp_port: u16,
                discovery_port: u16,
                tx: mpsc::Sender<Event>,
-               contact_info: Arc<Mutex<StaticContactInfo>>)
+               contact_info: Rc<Mutex<StaticContactInfo>>)
                -> Result<Connections, Error> {
         sodiumoxide::init();
-        let our_keys = box_::gen_keypair();
+        let (our_public_key, Rc::new(secret_key)) = box_::gen_keypair();
 
         let mut event_loop = EventLoop::new().unwrap();
         let event_loop_tx = event_loop.channel();
@@ -107,8 +108,8 @@ impl Connections {
             handler: handler,
             tx: tx,
             contact_info: contact_info,
-            our_secret_key: our_keys.0,
-            our_public_key: our_keys.1,
+            our_secret_key: secret_key,
+            our_public_key: our_public_key,
         }
     }
 
@@ -137,7 +138,7 @@ impl Connections {
         self.clients.remove(tkn)
     }
 
-    pub fn send_message(&mut self, token: Token, msg: &[u8]) -> Result<()> {
+    pub fn send_message(&mut self, token: Token, msg: &[u8]) -> Result<(), Error> {
         let peer = try!(self.peers.get_mut(&token));
         peer.send_message(msg)
     }
