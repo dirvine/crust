@@ -55,6 +55,8 @@ pub enum Error {
     SerialisationError(maidsafe_utilities::serialisation::SerialisationError),
     /// connection closed
     ConnectionClosed,
+    /// bad state fro action
+    InvalidState,
 }
 
 impl From<maidsafe_utilities::serialisation::SerialisationError> for Error {

@@ -25,19 +25,20 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::net;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
 use service_discovery::ServiceDiscovery;
+use rustc_serialize::{Encodable, Decodable};
 use sodiumoxide;
 use sodiumoxide::crypto::box_;
 use sodiumoxide::crypto::box_::{PrecomputedKey, PublicKey, SecretKey};
-use bytes::{Buf, ByteBuf, MutByteBuf};
+use bytes::{Buf, ByteBuf, MutByteBuf, Take};
 use mio::tcp::{TcpListener, TcpStream};
-use mio::udp::UdpSocket;
-use mio::{EventLoop, EventSet, Handler, NotifyError, PollOpt, Sender, Token};
+use mio::net::udp::UdpSocket;
+use mio::{EventLoop, EventSet, Handler, NotifyError, PollOpt, Sender, Token, TryRead, TryWrite};
 use nat_traversal::{MappedUdpSocket, MappingContext, PrivRendezvousInfo, PubRendezvousInfo,
                     PunchedUdpSocket, gen_rendezvous_info};
 use slab::Slab;
@@ -69,12 +70,109 @@ pub enum Socket {
     Udp(UdpSocket, net::SocketAddr),
 }
 
-#[derive(PartialEq)]
+// #[derive(PartialEq)]
 enum PeerState {
     AwaitingHandshake,
     HandShakeResponse,
     Connected,
+    Reading(Vec<u8>),
+    Writing(Take<Cursor<Vec<Vec<u8>>>>),
+    Closed,
 }
+
+// impl PeerState {
+//     fn mut_read_buf(&mut self) -> &mut Vec<u8> {
+//         match *self {
+//             PeerState::Reading(ref mut buf) => buf,
+//             _ => panic!("connection not in reading state"),
+//         }
+//     }
+//
+//     fn read_buf(&self) -> &[u8] {
+//         match *self {
+//             PeerState::Reading(ref buf) => buf,
+//             _ => panic!("connection not in reading state"),
+//         }
+//     }
+//
+//     fn write_buf(&self) -> &Take<Cursor<Vec<u8>>> {
+//         match *self {
+//             PeerState::Writing(ref buf) => buf,
+//             _ => panic!("connection not in writing state"),
+//         }
+//     }
+//
+//     fn mut_write_buf(&mut self) -> &mut Take<Cursor<Vec<u8>>> {
+//         match *self {
+//             PeerState::Writing(ref mut buf) => buf,
+//             _ => panic!("connection not in writing state"),
+//         }
+//     }
+//
+//     // Looks for a data, if there is some the state is transitioned to
+//     // writing
+//     fn try_transition_to_writing(&mut self) {
+//         if let Some(pos) = self.read_buf().iter().position(|b| *b == b'\n') {
+//             // First, remove the current read buffer, replacing it with an
+//             // empty Vec<u8>.
+//             let buf = mem::replace(self, PeerState::Closed)
+//                 .unwrap_read_buf();
+//
+//             // Wrap in `Cursor`, this allows Vec<u8> to act as a readable
+//             // buffer
+//             let buf = Cursor::new(buf);
+//
+//             // Transition the state to `Writing`, limiting the buffer to the
+//             // new line (inclusive).
+//             *self = PeerState::Writing(Take::new(buf, pos + 1));
+//         }
+//     }
+//
+//     // If the buffer being written back to the client has been consumed, switch
+//     // back to the reading state. However, there already might be another line
+//     // in the read buffer, so `try_transition_to_writing` is called as a final
+//     // step.
+//     fn try_transition_to_reading(&mut self) {
+//         if !self.write_buf().has_remaining() {
+//             let cursor = mem::replace(self, PeerState::Closed)
+//                 .unwrap_write_buf()
+//                 .into_inner();
+//
+//             let pos = cursor.position();
+//             let mut buf = cursor.into_inner();
+//
+//             // Drop all data that has been written to the client
+//             drain_to(&mut buf, pos as usize);
+//
+//             *self = PeerState::Reading(buf);
+//
+//             // Check for any new lines that have already been read.
+//             self.try_transition_to_writing();
+//         }
+//     }
+//
+//     fn event_set(&self) -> mio::EventSet {
+//         match *self {
+//             PeerState::Reading(..) => mio::EventSet::readable(),
+//             PeerState::Writing(..) => mio::EventSet::writable(),
+//             _ => mio::EventSet::none(),
+//         }
+//     }
+//
+//     fn unwrap_read_buf(self) -> Vec<u8> {
+//         match self {
+//             PeerState::Reading(buf) => buf,
+//             _ => panic!("connection not in reading state"),
+//         }
+//     }
+//
+//     fn unwrap_write_buf(self) -> Take<Cursor<Vec<u8>>> {
+//         match self {
+//             PeerState::Writing(buf) => buf,
+//             _ => panic!("connection not in writing state"),
+//         }
+//     }
+// }
 
 struct Peer {
     socket: Socket,
@@ -83,7 +181,7 @@ struct Peer {
     tx: mpsc::Sender<Event>,
     mio_sink: Sender<MioMessage>,
     bytes_out: ByteBuf,
-    outgoing: Vec<u8>,
+    outgoing: Vec<Vec<u8>>,
     data_in: ByteBuf,
     our_secret_key: Rc<SecretKey>, // Only used to create a pre_computed_key or decrypt a bootstrap
     our_public_key: Rc<PublicKey>,
@@ -158,6 +256,50 @@ impl Peer {
 
     }
 
+    fn read_buf(&self, socket: &mut Socket, buf: &mut Vec<u8>) -> Result<usize, Error> {
+        match *socket {
+            Socket::Tcp(stream) => {
+                let opt = try!(stream.try_read_buf(buf));
+                match opt {
+                    Some(size) => Ok(size),
+                    None => Ok(0usize),
+                }
+            }
+            Socket::Udp(socket, _) => {
+                // let _test_socket = try!(socket.bound(sock_addr)); // check bound
+                let opt = try!(socket.recv_from(buf));
+                match opt {
+                    Some(size) => Ok(size.0), // Ignoring who sent this !!!!! FIXME
+                    // if socket_addr != ours then register a new connection ?
+                    None => Ok(0usize),
+                }
+            }
+        }
+    }
+    fn write_buf(&self) -> Result<usize, Error> {
+        match self.socket {
+            Socket::Tcp(stream) => {
+                // let mut buf = Cursor::new(self.bytes_out);
+
+                let opt = try!(stream.try_write_buf(&mut self.bytes_out));
+                match opt {
+                    Some(size) => Ok(size),
+                    None => Ok(0usize),
+                }
+            }
+            Socket::Udp(socket, ref sock_addr) => {
+                // let _test_socket = try!(socket.bound(sock_addr)); // check bound
+                let mut slice: Vec<u8>;
+                self.bytes_out.read_slice(&mut slice);
+                let opt = try!(socket.send_to(&mut slice, sock_addr));
+                match opt {
+                    Some(size) => Ok(size),
+                    None => Ok(0usize),
+                }
+            }
+
+        }
+    }
     /// Queues message for sending, returns number of messgaes wiating to go to this peer
     pub fn send_message(&mut self, msg: &Vec<u8>, token: Token) -> Result<usize, Error> {
         if self.close {
@@ -165,7 +307,7 @@ impl Peer {
         }
         let bytes = try!(self.serialise_message(msg));
 
-        self.outgoing.push_all(&bytes);
+        self.outgoing.push(bytes);
 
         if self.interest.is_readable() {
             self.interest.insert(EventSet::writable());
@@ -178,84 +320,105 @@ impl Peer {
     }
 
     pub fn write(&mut self) {
-        match self.state {
+        let result = match self.state {
             PeerState::AwaitingHandshake => self.write_secure_handshake(),
             PeerState::HandShakeResponse => self.write_handshake(),
             PeerState::Connected => self.write_messages(),
-            _ => {}
+        };
+        match result {
+            Err(err) => {
+                debug!("Write error on connection {:?}, error was {:?}",
+                       self.token,
+                       err)
+            }
+            Ok(_) => {}
         }
     }
 
-    fn serialise_message(&self, msg: &Vec<u8>) -> Result<Vec<u8>, Error> {
+    fn serialise_message<T: Encodable>(&self, msg: &T) -> Result<Vec<u8>, Error> {
         if let Some(pre_key) = self.precomputed_key {
-            Ok(try!(secure_serialisation::pre_computed_serialise::<Vec<u8>>(msg, &pre_key)))
+            Ok(try!(secure_serialisation::pre_computed_serialise::<T>(msg, &pre_key)))
         } else if let Some(pub_key) = self.their_public_key {
-            Ok(try!(secure_serialisation::anonymous_serialise::<Vec<u8>>(msg, &pub_key)))
+            Ok(try!(secure_serialisation::anonymous_serialise::<T>(msg, &pub_key)))
         } else {
             Ok(try!(maidsafe_utilities::serialisation::serialise(msg)))
         }
     }
 
-    fn write_secure_handshake(&mut self) {
+    fn get_handshake(&self, connection_type: PeerConnectionType) -> HandShake {
+        HandShake {
+            listeners: self.contact_info.lock().unwrap().clone(),
+            public_key: *self.our_public_key,
+            connection_type: connection_type,
+        }
+    }
+
+    fn write_secure_handshake(&mut self) -> Result<(), Error> {
         // send our handshake first
-        let handshake =
-            secure_serialisation::pre_computed_serialise::<HandShake>(&HandShake {
-                                                                      listeners: *self.contact_info.lock().unwrap(),
+        if let Some(ref pre_key) = self.precomputed_key {
+            let handshake = try!(secure_serialisation::pre_computed_serialise::<HandShake>(
+                                                    &self.get_handshake(PeerConnectionType::Full),
+                                                    pre_key));
+            let socket = match self.socket {
+                Socket::Tcp(mut sock) => sock.write(&handshake),
+                Socket::Udp(mut sock, ref sock_addr) => unimplemented!(), // sock.send_to(&handshake, sock_addr),
+            };
+            // Change the state
+            self.state = PeerState::Connected;
+            // Send the connection event
+            self.tx.send(Event::NewPeer(self.token.as_usize(), PeerConnectionType::Full));
+            self.interest.remove(EventSet::writable());
+            self.interest.insert(EventSet::readable());
+            return Ok(());
+        } else {
+            return Err(Error::InvalidState);
+        }
+    }
+
+    fn write_handshake(&mut self) -> Result<(), Error> {
+        let handshake;
+        if let Some(key) = self.their_public_key {
+            handshake = try!(secure_serialisation::anonymous_serialise::<HandShake>(&HandShake {
+                                                                      listeners: self.contact_info.lock().unwrap().clone(),
                                                                       public_key: *self.our_public_key,
-                                                                      connection_type: PeerConnectionType::Full
+                                                                      connection_type: PeerConnectionType::Bootstrap
                                                                       },
-                                                                      &self.precomputed_key.unwrap()).unwrap();
+                                                                     &key));
+        } else {
+            handshake = try!(maidsafe_utilities::serialisation::serialise::<HandShake>(&HandShake {
+                    listeners: self.contact_info.lock().unwrap().clone(),
+                    public_key: *self.our_public_key,
+                    connection_type: PeerConnectionType::Bootstrap,
+                }));
+        }
+
         let socket = match self.socket {
             Socket::Tcp(mut sock) => sock.write(&handshake),
             Socket::Udp(mut sock, ref sock_addr) => unimplemented!(), // sock.send_to(&handshake, sock_addr),
         };
-        // Change the state
-        self.state = PeerState::Connected;
-        // Send the connection event
-        self.tx.send(Event::NewPeer(self.token.as_usize(), PeerConnectionType::Full));
-        self.interest.remove(EventSet::writable());
-        self.interest.insert(EventSet::readable());
-    }
 
-    fn write_handshake(&mut self) {
-        let handshake = match self.their_public_key {
-            Some(ref key) => secure_serialisation::anonymous_serialise::<HandShake>(&HandShake {
-                                                                      listeners: *self.contact_info.lock().unwrap(),
-                                                                      public_key: *self.our_public_key,
-                                                                      connection_type: PeerConnectionType::Bootstrap
-                                                                      },
-                                                                     key),
-            None => {
-                maidsafe_utilities::serialisation::serialise::<HandShake>(&HandShake {
-                    listeners: *self.contact_info.lock().unwrap(),
-                    public_key: *self.our_public_key,
-                    connection_type: PeerConnectionType::Bootstrap,
-                })
-            }
-        };
-
-        self.socket.try_write(handshake.as_bytes()).unwrap();
 
         // Change the state
         self.state = PeerState::Connected;
 
         // Send the connection event
-        self.tx.send(Event::NewPeer(self.token), PeerConnectionType::Bootstrap);
+        self.tx.send(Event::NewPeer(self.token.as_usize(), PeerConnectionType::Bootstrap));
 
         self.interest.remove(EventSet::writable());
         self.interest.insert(EventSet::readable());
+        Ok(())
     }
 
 
-    fn write_messages(&mut self) {
+    fn write_messages(&mut self) -> Result<(), Error> {
         loop {
             if !self.bytes_out.has_remaining() {
                 if self.outgoing.len() > 0 {
                     trace!("{:?} has {} more messgages to send in queue",
                            self.token,
                            self.outgoing.len());
-                    let out_buf = self.serialize_frames();
-                    self.bytes_out = ByteBuf::from_slice(&*out_buf);
+                    let out_buf = self.outgoing.pop(); // FIXME - take from front (deque ??)
+                    self.bytes_out = ByteBuf::from_slice(&out_buf.unwrap());
                     self.outgoing.clear();
                 } else {
                     // Buffer is exhausted and we have no more frames to send out.
@@ -263,7 +426,7 @@ impl Peer {
                     if self.close {
                         trace!("{:?} closing connection", self.token);
                         // self.socket.shutdown(Shutdown::Write);
-                        self.tx.send(Event::LostPeer(self.token));
+                        self.tx.send(Event::LostPeer(self.token.as_usize()));
                     }
                     self.interest.remove(EventSet::writable());
                     self.interest.insert(EventSet::readable());
@@ -271,37 +434,40 @@ impl Peer {
                 }
             }
 
-            match self.socket.try_write_buf(&mut self.outgoing_bytes) {
-                Ok(Some(write_bytes)) => {
-                    trace!("{:?} wrote {} bytes, remaining: {}",
+            match self.write_buf() {
+                Ok(write_bytes) => {
+                    trace!("{:?} wrote {} bytes, messages remaining: {}",
                            self.token,
                            write_bytes,
-                           self.outgoing_bytes.remaining());
+                           self.outgoing.len());
                 }
-                Ok(None) => {
+                Ok(0) => {
                     // This write call would block
                     break;
                 }
                 Err(e) => {
-                    error!("{:?} Error occured while writing bytes: {}", self.token, e);
+                    error!("{:?} Error occured while writing bytes: {:?}",
+                           self.token,
+                           e);
                     self.interest.remove(EventSet::writable());
                     self.interest.insert(EventSet::hup());
                     break;
                 }
             }
         }
+        Ok(())
     }
 
     pub fn read(&mut self) {
         match self.state {
-            PeerState::AwaitingHandshake(_) => self.read_handshake(),
+            PeerState::AwaitingHandshake => self.read_handshake(),
             PeerState::Connected => self.read_message(),
             _ => {}
         };
         if self.close {
             trace!("{:?} closing connection", self.token);
-            // self.socket.shutdown(Shutdown::Write);
-            self.tx.send(Event::LostPeer(self.token));
+            // self.socket.shutdown(Shutdown::Read);
+            self.tx.send(Event::LostPeer(self.token.as_usize()));
         };
 
     }
@@ -309,7 +475,7 @@ impl Peer {
     fn read_message(&mut self) {
         loop {
             let mut buf = ByteBuf::mut_with_capacity(16384);
-            match self.socket.try_read_buf(&mut buf) {
+            match self.read_buf(&mut self.socket, &mut buf) {
                 Err(e) => {
                     error!("{:?} Error while reading socket: {:?}", self.token, e);
                     self.interest.remove(EventSet::readable());
