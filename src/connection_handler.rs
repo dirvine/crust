@@ -59,7 +59,16 @@ pub enum MioMessage {
     ShutDown,
 }
 
-
+/// Identify the type of connection we are after
+#[derive(Debug, RustcEncodable, RustcDecodable)]
+pub enum PeerConnectionType {
+    /// One way encrypted or plain connection only
+    Bootstrap,
+    /// Will not be a full node. only request relay
+    Relay,
+    /// A full participating ndoe
+    Full,
+}
 
 pub struct ConnectionHandler {
     event_loop_tx: Sender<MioMessage>,

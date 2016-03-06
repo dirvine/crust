@@ -257,7 +257,7 @@ impl Peer {
     }
 
     fn read_buf(&self, socket: &mut Socket, buf: &mut Vec<u8>) -> Result<usize, Error> {
-        match *socket {
+        match *self.socket {
             Socket::Tcp(stream) => {
                 let opt = try!(stream.try_read_buf(buf));
                 match opt {
