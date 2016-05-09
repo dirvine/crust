@@ -1,18 +1,26 @@
 // Copyright 2015 MaidSafe.net limited.
 //
-// This SAFE Network Software is licensed to you under (1) the MaidSafe.net Commercial License,
-// version 1.0 or later, or (2) The General Public License (GPL), version 3, depending on which
+// This SAFE Network Software is licensed to you under (1) the MaidSafe.net
+// Commercial License,
+// version 1.0 or later, or (2) The General Public License (GPL), version 3,
+// depending on which
 // licence you accepted on initial access to the Software (the "Licences").
 //
-// By contributing code to the SAFE Network Software, or to this project generally, you agree to be
-// bound by the terms of the MaidSafe Contributor Agreement, version 1.0.  This, along with the
-// Licenses can be found in the root directory of this project at LICENSE, COPYING and CONTRIBUTOR.
+// By contributing code to the SAFE Network Software, or to this project
+// generally, you agree to be
+// bound by the terms of the MaidSafe Contributor Agreement, version 1.0.
+// This, along with the
+// Licenses can be found in the root directory of this project at LICENSE,
+// COPYING and CONTRIBUTOR.
 //
-// Unless required by applicable law or agreed to in writing, the SAFE Network Software distributed
-// under the GPL Licence is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// Unless required by applicable law or agreed to in writing, the SAFE Network
+// Software distributed
+// under the GPL Licence is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES
+// OR CONDITIONS OF ANY
 // KIND, either express or implied.
 //
-// Please review the Licences for the specific language governing permissions and limitations
+// Please review the Licences for the specific language governing permissions
+// and limitations
 // relating to use of the SAFE Network Software.
 
 #![deny(unused)]
@@ -27,17 +35,18 @@ use service_discovery::ServiceDiscovery;
 use sodiumoxide;
 use sodiumoxide::crypto::box_;
 use sodiumoxide::crypto::box_::{PublicKey, SecretKey};
-use net2;
-use nat_traversal::{MappingContext, PrivRendezvousInfo, MappedTcpSocket, PubRendezvousInfo,
-                    gen_rendezvous_info, SimpleTcpHolePunchServer, tcp_punch_hole};
+use nat_traversal::{ÝMappedUdpSocket, MappingContext, PrivRendezvousInfo, PubRendezvousInfo,
+                    PunchedUdpSocket, gen_rendezvous_info};
 
-
+[MaÝ]
 use sender_receiver::CrustMsg;
 use connection::RaiiTcpAcceptor;
 use static_contact_info::StaticContactInfo;
-use config_handler::{Config, read_config_file};
-use connection::{Connection, ConnectionInfo};
+use rand;
+use [MaÝ[MaÝ[MaÝ[MaÝconfig_handler::Config;
+use connection::Connection;
 use error::Error;
+use ip::SocketAddrEx[M#ß[M#Ù[M#Õt;
 use connection;
 use bootstrap;
 use bootstrap::RaiiBootstrap;
@@ -91,6 +100,7 @@ impl OurConnectionInfo {
 pub struct TheirConnectionInfo {
     tcp_info: PubRendezvousInfo,
     static_contact_info: StaticContactInfo,
+    // tcp_addrs: Vkec<SocketAddr>,
     id: PeerId,
 }
 
@@ -159,19 +169,21 @@ impl Service {
 
         let cloned_contact_info = static_contact_info.clone();
         let generator = move || unwrap_result!(cloned_contact_info.lock()).clone();
-        let service_discovery =
-            try!(ServiceDiscovery::new_with_generator(config.service_discovery_port
-                                                            .unwrap_or(DEFAULT_BEACON_PORT),
-                                                      generator));
+        let service_discovery = try!(ServiceDiscovery::new_with_generator(service_discovery_port,
+                                                                          generator));
 
+        let config = match ::config_handler::read_config_file() {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                debug!("Crust failed to read config file; Error: {:?};", e);
+                try!(::config_handler::create_default_config_file());
+                Config::make_default()
+            }
+        };
         let mapping_context = try!(MappingContext::new()
-                                       .result_log()
-                                       .or_else(|e| {
-                                           Err(io::Error::new(io::ErrorKind::Other,
-                                                              format!("Failed to create \
-                                                                       MappingContext: {}",
-                                                                      e)))
-                                       }));
+                                       .result_discard()
+                                       .or(Err(io::Error::new(io::ErrorKind::Other,
+                                                              "Failed to create MappingContext"))));
         // Form initial peer contact infos - these will also contain echo-service addrs.
         let bootstrap_cache =
             Arc::new(Mutex::new(try!(BootstrapHandler::new(&config.bootstrap_cache_name))));
@@ -245,18 +257,34 @@ impl Service {
     /// Starts accepting TCP connections.
     pub fn start_listening_tcp(&mut self) -> io::Result<()> {
         // Start the TCP Acceptor
-        let result = connection::start_tcp_accept(self.tcp_acceptor_port.unwrap_or(0),
-                                                  self.heart_beat_timeout,
-                                                  self.inactivity_timeout,
-                                                  self.static_contact_info.clone(),
-                                                  self.our_keys.0.clone(),
-                                                  self.event_tx.clone(),
-                                                  self.connection_map.clone(),
-                                                  self.bootstrap_cache.clone(),
-                                                  self.expected_peers.clone(),
-                                                  self.mapping_context.clone(),
-                                                  self.version_hash);
-        self.raii_tcp_acceptor = Some(try!(result));
+        self.raii_tcp_acceptor = Some(try!(connection::start_tcp_accept(self.tcp_acceptor_port
+                                                                            .unwrap_or(0),
+                                                                        self.static_contact_info
+                                                                            .clone(),
+                                                                        self.our_keys.0.clone(),
+                                                                        self.peer_contact_infos
+                                                                            .clone(),
+                                                                        self.event_tx.clone(),
+                                                                        self.connection_map
+                                                                            .clone(),
+                                                                        self.expected_peers
+                                                                            .clone())));
+        Ok(())
+    }
+
+    /// Starts accepting uTP connections.
+    pub fn start_listening_utp(&mut self) -> io::Result<()> {
+        // Start the UDP Listener
+        // [TODO]: we should find the exteranl address and if we are directly acessabel
+        // here for all listerners. Also listen on ip4 and 6 for all protocols -
+        // 2016-02-10 11:28pm
+        self.raii_udp_listener = Some(try!(RaiiUdpListener::new(self.utp_acceptor_port
+                                                                    .unwrap_or(0),
+                                                                self.static_contact_info.clone(),
+                                                                self.our_keys.0.clone(),
+                                                                self.event_tx.clone(),
+                                                                self.connection_map.clone(),
+                                                                self.mapping_context.clone())));
         Ok(())
     }
 
@@ -324,10 +352,6 @@ impl Service {
                    our_connection_info: OurConnectionInfo,
                    their_connection_info: TheirConnectionInfo) {
         let their_id = their_connection_info.id;
-        if their_id == self.id() {
-            return;
-        }
-
         if !unwrap_result!(self.connection_map.lock())
                 .get(&their_id)
                 .into_iter()
@@ -385,8 +409,7 @@ impl Service {
                         };
                     }
                 }
-            });
-        }
+            }
 
         if let Some(tcp_socket) = our_connection_info.tcp_socket {
             let tcp_info = their_connection_info.tcp_info;
@@ -461,30 +484,36 @@ impl Service {
 
     /// Lookup a mapped udp socket based on result_token
     pub fn prepare_connection_info(&mut self, result_token: u32) {
-        // FIXME: If the listeners are directly addressable (direct full cone or upnp mapped etc.
+        // FIXME: If the listeners are directly addressable (direct full cone or upnp
+        // mapped etc.
         // then our conact info is our static liseners
-        // for udp we can map another socket, but use same local port if accessable/mapped
+        // for udp we can map another socket, but use same local port if
+        // accessable/mapped
         // otherwise do following
         let our_static_contact_info = self.static_contact_info.clone();
         let event_tx = self.event_tx.clone();
 
+        self.mapping_context.add_simple_servers(peer_udp_listeners);
+        let result_external_socket = MappedUdpSocket::new(&self.mapping_context).result_discard();
         let mapping_context = self.mapping_context.clone();
         let our_pub_key = self.our_keys.0.clone();
-        let _joiner = thread!("PrepareConnectionInfo", move || {
-            let (tcp_socket, (our_priv_tcp_info, our_pub_tcp_info)) =
-                match MappedTcpSocket::new(&mapping_context).result_log() {
-                    Ok(MappedTcpSocket { socket, endpoints }) => {
-                        (Some(socket), gen_rendezvous_info(endpoints))
+        let _joiner = thread!("PrepareContactInfo", move || {
+            let (udp_socket, (our_priv_info, our_pub_info)) =
+                match MappedUdpSocket::new(&mapping_context).result_discard() {
+                    Ok(MappedUdpSocket { socket, endpoints }) => {
+                        (socket, gen_rendezvous_info(endpoints))
                     }
-                    Err(err) => {
+                    Err(e) => {
                         let _ =
                             event_tx.send(Event::ConnectionInfoPrepared(ConnectionInfoResult {
                                 result_token: result_token,
-                                result: Err(From::from(err)),
+                                result: Err(io::Error::new(io::ErrorKind::Other,
+                                                           "Cannot map UDP socket")),
                             }));
                         return;
                     }
                 };
+
 
             let event = Event::ConnectionInfoPrepared(ConnectionInfoResult {
                 result_token: result_token,
@@ -523,17 +552,16 @@ mod test {
     use event::Event;
 
     use std::time::Duration;
-    use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
-    use std::sync::{Arc, Barrier};
+    use std::sync::{Arc, Barrier, Mutex};
     use std::sync::mpsc;
     use std::sync::mpsc::Receiver;
     use std::thread;
     use std::thread::JoinHandle;
-    use std::collections::{hash_map, HashMap};
+    use std::collections::{HashMap, hash_map};
 
     use crossbeam;
     use void::Void;
-    use maidsafe_utilities::event_sender::{MaidSafeObserver, MaidSafeEventCategory};
+    use maidsafe_utilities::event_sender::{MaidSafeEventCategory, MaidSafeObserver};
 
 
     fn get_event_sender
@@ -632,7 +660,15 @@ mod test {
         let mut service_0 = unwrap_result!(Service::with_config(event_sender_0, &config_0));
         let _ = service_0.start_listening_tcp();
 
-        // let service_0 finish bootstrap - since it is the zero state, it should not find any peer
+        let mut service_0 = unwrap_result!(Service::new(event_sender_0, port));
+        if use_tcp {
+            unwrap_result!(service_0.start_listening_tcp());
+        }
+        if use_udp {
+            unwrap_result!(service_0.start_listening_utp());
+        }
+        // let service_0 finish bootstrap - since it is the zero state, it should not
+        // find any peer
         // to bootstrap
         {
             let event_rxd = unwrap_result!(event_rx_0.recv());
@@ -766,10 +802,40 @@ mod test {
             event => panic!("Received unexpected event: {:?}", event),
         }
 
-        let mut service_1 = unwrap_result!(Service::with_config(event_sender_1, &config));
-        let _ = service_1.start_listening_tcp();
+        // service_0 should have received service_1's bootstrap connection by now.
+        let id_1 = match unwrap_result!(event_rx_0.recv()) {
+            Event::BootstrapAccept(their_id) => their_id,
+            _ => panic!("0 Should have got a new connection from 1."),
+        };
 
-        // let service_0 finish bootstrap - since it is the zero state, it should not find any peer
+        // Dropping service_0 should make service_1 receive a LostPeer event.
+        drop(service_0);
+        match unwrap_result!(event_rx_1.recv()) {
+            Event::LostPeer(id) => assert_eq!(id, id_0),
+            event => panic!("Received unexpected event: {:?}", event),
+        }
+    }
+
+    #[test]
+    fn start_two_service_udp_rendezvous_connect() {
+        let (event_sender_0, category_rx_0, event_rx_0) = get_event_sender();
+        let (event_sender_1, category_rx_1, event_rx_1) = get_event_sender();
+
+        let mut service_0 = unwrap_result!(Service::new(event_sender_0, 1234));
+        // let service_0 finish bootstrap - since it is the zero state, it should not
+        // find any peer
+        // to bootstrap
+        {
+            let event_rxd = unwrap_result!(event_rx_0.recv());
+            match event_rxd {
+                Event::BootstrapFinished => (),
+                _ => panic!("Received unexpected event: {:?}", event_rxd),
+            }
+        }
+
+        let mut service_1 = unwrap_result!(Service::new(event_sender_1, 1234));
+        // let service_0 finish bootstrap - since it is the zero state, it should not
+        // find any peer
         // to bootstrap
         match unwrap_result!(event_rx_1.recv()) {
             Event::BootstrapFinished => (),
@@ -919,7 +985,7 @@ mod test {
                             for _ in 0..MSG_SIZE {
                                 msg.push(n as u8);
                             }
-                            let _ = self.service.send(their_id, msg);
+                            self.service.send(their_id, msg);
                         }
                     }
 
@@ -937,7 +1003,7 @@ mod test {
                                         assert_eq!(*next_msg as u8, n);
                                         *next_msg += 1;
                                     }
-                                    hash_map::Entry::Vacant(_) => panic!("impossible!"),
+                                    hash_map::Entry::Vacant(ve) => panic!("impossible!"),
                                 }
                             }
                             m => panic!("Unexpected msg receiving NewMessage: {:?}", m),

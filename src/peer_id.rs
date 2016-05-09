@@ -27,9 +27,13 @@ pub struct PeerId(PublicKey);
 impl fmt::Debug for PeerId {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         write!(formatter,
-               "PeerId({:02x}{:02x}..)",
+               "PeerId({:02x}{:02x}{:02x}..{:02x}{:02x}{:02x})",
                (self.0).0[0],
-               (self.0).0[1])
+               (self.0).0[1],
+               (self.0).0[2],
+               (self.0).0[PUBLICKEYBYTES - 3],
+               (self.0).0[PUBLICKEYBYTES - 2],
+               (self.0).0[PUBLICKEYBYTES - 1])
     }
 }
 

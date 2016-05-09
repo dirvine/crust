@@ -66,11 +66,26 @@ pub fn upgrade_tcp(stream: TcpStream,
     Ok((s1, upgrade_writer(s2, heartbeat_period)))
 }
 
-fn get_msg_priority(msg: &CrustMsg) -> usize {
-    match *msg {
-        CrustMsg::Message(ref data) if data.len() > SIZE_THRESHOLD => 1,
-        _ => 0,
-    }
+fn upgrade_writer(mut stream: TcpStream) -> Sender<WriteEvent> {
+    let (tx, rx) = mpsc::channel();
+    let _ = unwrap_result!(thread::Builder::new()
+                               .name("TCP writer".to_owned())
+                               .spawn(move || {
+                                   while let Ok(event) = rx.recv() {
+                                       match event {
+                                           WriteEvent::Write(data) => {
+                                               use std::io::Write;
+                                               let msg = unwrap_result!(serialise(&data));
+                                               if stream.write_all(&msg).is_err() {
+                                                   break;
+                                               }
+                                           }
+                                           WriteEvent::Shutdown => break,
+                                       }
+                                   }
+                                   stream.shutdown(Shutdown::Both)
+                               }));
+    tx
 }
 
 fn upgrade_writer(mut stream: TcpStream, heartbeat_period: Duration) -> Sender<WriteEvent> {
@@ -317,13 +332,18 @@ mod test {
 
         fn read_messages(reader: TcpStream) {
             reader.set_read_timeout(Some(Duration::new(5, 0))).unwrap();
-            let mut rx = Receiver::tcp(reader);
-
-            for i in 0..MSG_COUNT {
-                match unwrap_result!(rx.receive()) {
-                    CrustMsg::Message(msg) => {
-                        let s: String = unwrap_result!(deserialise(&msg));
-                        assert_eq!(s, format!("MSG{}", i));
+            'outer: loop {
+                for m in d.decode::<CrustMsg>() {
+                    match m {
+                        Ok(CrustMsg::Message(msg)) => {
+                            println!("received {:?}", ::std::str::from_utf8(&msg))
+                        }
+                        Ok(m) => panic!("Unexpected crust message type {:#?}", m),
+                        Err(what) => panic!("Problem decoding message {}", what),
+                    };
+                    received += 1;
+                    if received == MSG_COUNT {
+                        break 'outer;
                     }
                     m => panic!("Unexpected crust message type {:#?}", m),
                 }

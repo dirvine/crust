@@ -3,6 +3,7 @@
 *.swp
 *.rsproj
 tags*
+*.bk
 build/
 build-tests/
 target/
