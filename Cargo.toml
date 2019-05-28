@@ -16,7 +16,6 @@ crossbeam = "~0.2.10"
 get_if_addrs = "~0.5.3"
 igd = "~0.7.0"
 log = "~0.4.6"
-lru_time_cache = { git = "https://github.com/maidsafe/lru_time_cache", rev = "accc955" }
 maidsafe_utilities = "~0.17.0"
 mio = "~0.6.9"
 mio-extras = "~2.0.5"
@@ -30,6 +29,7 @@ serde_json = "~1.0.33"
 # TODO(povilas): use new version, when released
 socket-collection = { git = "https://github.com/maidsafe/socket-collection", rev = "e1ba943" }
 unwrap = "~1.2.1"
+lru_time_cache = "0.9.0"
 
 [dev-dependencies]
 clap = "~2.32.0"
