@@ -254,7 +254,7 @@ fn bootstrap_with_multiple_contact_endpoints() {
     let valid_address = localhost_contact_info(port, service0.pub_key());
 
     let deaf_listener = unwrap!(TcpListener::bind("127.0.0.1:0"));
-    let invalid_address = PeerInfo::new(unwrap!(deaf_listener.local_addr()), service0.pub_key());;
+    let invalid_address = PeerInfo::new(unwrap!(deaf_listener.local_addr()), service0.pub_key());
 
     let mut config1 = gen_config();
     config1.hard_coded_contacts = vec![invalid_address, valid_address];
